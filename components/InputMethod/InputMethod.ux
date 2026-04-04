@@ -138,9 +138,12 @@
       </div>
       <!-- 方屏67 -->
       <div if="{{screentype==='rect'}}" style="width: 100%;height: 255px;flex-direction: column">
-        <!-- 九键中文 -->
-        <div if="{{keyboardtype=='T9' && !numFlag}}" style="position:absolute;top:-11px;width:100%;height:276px;justify-content: center;">
-          <div style="top:77px;height:189px;width:100%;align-items: stretch;justify-content: space-between;flex-direction: column;padding:6px 3px">
+        <!-- XXX九键中文 -->
+        <div if="{{keyboardtype=='T9' && !numFlag}}" style="position:absolute;top:-11px;width:100%;height:276px;justify-content: space-between;flex-direction: row;">
+          <scroll if="{{lang === 'cn'}}" scroll-y="{{true}}" bounces="{{true}}" style="top:80px;height:186px;width:{{((94-75)/(432-336))*(screenWidth-336)+75}}px;align-items: center;flex-direction: column;background-color:rgb(38,38,38);margin-left:auto;margin-right:auto">
+            <text class="rect-t9-pinyin" for="{{item in pinyinCandidates}}" @click="onPinyinSelect(item)">{{item}}</text>
+          </scroll>
+          <div style="top:77px;height:189px;width:100%;align-items: stretch;justify-content: space-between;flex-direction: column;padding:6px 3px;">
             <div class="keyboard-rows-rect-t9">
               <text class="calbtnt9 calbtnt9-rect" @click="onSelect('select')">
                 选择
@@ -191,7 +194,9 @@
           <div if="{{lang === 'cn' && !numFlag}}" style="margin-left: 6px;flex: 1;height: 60px;background-color:#262626;border-color: #333333; border-width: 3px; border-radius: 100px;flex-direction: row;align-items:center">
             <scroll id="cvalWaiting" scroll-x="{{true}}" style="position:absolute;width: 85%;height: 42px;">
               <div static style="position: absolute;left: 0px;height: 42px;padding-left:20px;padding-right:20px">
-                <text class="calbtn02" style="padding-right:10px" @click="pushCval">{{cval}}</text>
+                <!-- T9 模式显示拼音，非 T9 模式显示 cval -->
+                <text class="calbtn02" style="padding-right:10px" @click="pushPinyin" if="{{keyboardtype === 'T9' && displayPinyin}}">{{displayPinyin}}</text>
+                <text class="calbtn02" style="padding-right:10px" @click="pushCval" else>{{cval}}</text>
                 <text for="{{cvalList}}" show="{{resultList.length > $idx}}" class="calbtn02" style="padding-right:10px" @click="onRsSelect(resultList[$idx])">{{resultList[$idx]}}</text>
               </div>
             </scroll>
@@ -289,6 +294,19 @@
 import vibrator from "@system.vibrator";
 import device from '@system.device'
 import { SimpleInputMethod } from "./assets/dicUtil.js";
+
+// T9 数字到字母的映射
+const T9_MAP = {
+  "2": "abc",
+  "3": "def", 
+  "4": "ghi",
+  "5": "jkl",
+  "6": "mno",
+  "7": "pqrs",
+  "8": "tuv",
+  "9": "wxyz",
+};
+
 function doSearchDic(word, cb) {
   let hanzi = SimpleInputMethod.getHanzi(word);
   if (hanzi && hanzi[0]) {
@@ -297,6 +315,40 @@ function doSearchDic(word, cb) {
     cb([]);
   }
 }
+
+// 根据数字序列生成所有可能的有效拼音
+function generateValidPinyins(numSequence) {
+  if (!numSequence || numSequence.length === 0) return [];
+  
+  // 使用 BFS 生成所有可能的拼音组合
+  let combinations = [''];
+  
+  for (let i = 0; i < numSequence.length; i++) {
+    const letters = T9_MAP[numSequence[i]];
+    if (!letters) continue;
+    
+    const newCombinations = [];
+    for (let combo of combinations) {
+      for (let letter of letters.split('')) {
+        const newCombo = combo + letter;
+        // 只有当新组合可能是有效拼音的前缀时才保留
+        if (SimpleInputMethod.getPinyinByPrefix(newCombo).length > 0) {
+          newCombinations.push(newCombo);
+        }
+      }
+    }
+    combinations = newCombinations;
+  }
+  
+  // 过滤出完整的拼音
+  const validPinyins = combinations.filter(combo => SimpleInputMethod.isValidPinyin(combo));
+  
+  // 按长度排序，短的在前（通常是单字拼音）
+  validPinyins.sort((a, b) => a.length - b.length);
+  
+  return validPinyins.slice(0, 50); // 限制数量避免过多
+}
+
 function deleteLast(t) {
   if (t) {
     return t.substr(0, t.length - 1);
@@ -323,6 +375,9 @@ export default {
   },
   data: {
     cval: "",
+    pinyinInput: "", // T9 输入的数字序列对应的拼音组合
+    displayPinyin: "", // T9 模式下 cvalWaiting 显示的拼音
+    pinyinCandidates: [], // T9 拼音候选列表
     resultList: [],
     resultList2: [],
     waitingList: [],
@@ -380,6 +435,18 @@ export default {
     this.$watch("hide", "watchHidePropsChange");
     this.$watch("maxlength", "watchMaxLengthPropsChange");
   },
+  // T9 拼音匹配：根据数字序列生成所有可能的拼音组合
+  generatePinyinCombinations(numSequence) {
+    return generateValidPinyins(numSequence);
+  },
+  // 从数字序列获取拼音候选
+  getPinyinByNums(numSequence) {
+    if (!numSequence || numSequence.length === 0) return [];
+    
+    const validPinyins = this.generatePinyinCombinations(numSequence);
+    this.pinyinCandidates = validPinyins;
+    return this.pinyinCandidates;
+  },
   addAllTxt(txt) {
     this.$emit("complete", { content: txt });
   },
@@ -388,6 +455,7 @@ export default {
     this.cval = "";
     this.addAllTxt(txt);
     this.clearWaiting();
+    this.clearPinyinInput();
     this.resetReslutList();
     this.downFlag = "";
   },
@@ -396,6 +464,7 @@ export default {
     switch (sign) {
       case "AC":
         this.cval = "";
+        this.clearPinyinInput();
         this.clearWaiting();
         this.resetReslutList();
         break;
@@ -406,11 +475,41 @@ export default {
           this.lang = "cn";
         }
         this.cval = "";
+        this.clearPinyinInput();
         this.clearWaiting();
         this.resetReslutList();
         break;
       case "D":
-        if (this.waitingIndex >= 0) {
+        if (this.pinyinInput && this.keyboardtype === "T9" && this.lang === "cn" && !this.numFlag) {
+          this.pinyinInput = deleteLast(this.pinyinInput);
+          
+          this.displayPinyin = "";
+          this.pinyinCandidates = [];
+          this.resultList = [];
+          
+          // 如果有剩余输入，重新生成拼音候选
+          if (this.pinyinInput.length > 0) {
+            const validPinyins = this.getPinyinByNums(this.pinyinInput);
+            
+            if (validPinyins.length > 0) {
+              // 有有效拼音，显示第一个
+              this.displayPinyin = validPinyins[0];
+              this.pinyinCandidates = validPinyins;
+              this.getResultByWord(validPinyins[0]);
+            } else {
+              // 没有有效拼音，显示this.pinyinInput每个按键的第一个字母
+              for(let i = 0; i < this.pinyinInput.length; i++) {
+                const numKey = this.pinyinInput[i];
+                const letters = T9_MAP[numKey];
+                if (letters) {
+                  this.displayPinyin += letters[0];
+                }
+              }
+            }
+          }
+          
+          this.resetReslutList();
+        } else if (this.waitingIndex >= 0) {
           this.clearWaiting();
           this.resetReslutList();
         } else if (this.cval.length > 0) {
@@ -427,6 +526,13 @@ export default {
         this.downFlag = this.downFlag === "down" ? "" : "down";
         break;
       case "select":
+        // T9 拼音
+        if (this.keyboardtype === "T9" && this.lang === "cn" && !this.numFlag && this.screentype != "circle") {
+          if (this.resultList.length > 0 && this.waitingIndex >= 0) {
+            this.onRsSelect(this.resultList[this.waitingIndex]);
+          }
+          return;
+        }
         if (this.lastWaitingStr != sign && this.lastWaitingStr) {
           if (this.lang === "cn") {
             this.cval += this.waitingList[this.waitingIndex];
@@ -444,11 +550,15 @@ export default {
       case "switchNum":
         this.numFlag = true;
         this.cval = "";
+        this.pinyinInput = "";
         this.clearWaiting();
         this.resetReslutList();
         break;
       case "switchCn":
         this.numFlag = false;
+        this.pinyinInput = "";
+        this.clearWaiting();
+        this.resetReslutList();
         break;
       case "switchUpper":
         this.upperFlag = true;
@@ -457,6 +567,41 @@ export default {
         this.upperFlag = false;
         break;
       default:
+        // T9 拼音输入模式
+        if (this.keyboardtype === "T9" && this.lang === "cn" && !this.numFlag && sign.length > 1 && this.screentype != "circle") {
+          let numKeyValue = "";
+          
+          for (let i = 2; i <= 9; i++){
+            if(T9_MAP[i] === sign){
+              numKeyValue = i.toString();
+              break;
+            }
+          }
+          
+          if (numKeyValue) {
+            this.pinyinInput += numKeyValue;
+            this.waitingIndex = 0;
+            
+            // 生成并过滤拼音候选
+            const validPinyins = this.getPinyinByNums(this.pinyinInput);
+            
+            if (validPinyins.length > 0) {
+              this.displayPinyin = validPinyins[0];
+              this.getResultByWord(validPinyins[0]);
+            } else {
+              this.displayPinyin = "";
+              for(let i = 0; i < this.pinyinInput.length; i++) {
+                const numKey = this.pinyinInput[i];
+                const letters = T9_MAP[numKey];
+                if (letters) {
+                  this.displayPinyin += letters[0];
+                }
+              }
+            }
+          }
+          return;
+        }
+        
         if (sign.length === 1) {
           this.addAllTxt(sign);
         } else {
@@ -499,14 +644,40 @@ export default {
     this.waitingIndex = -1;
     this.lastWaitingStr = "";
   },
+  clearPinyinInput() {
+    this.pinyinInput = "";
+    this.displayPinyin = "";
+    this.pinyinCandidates = [];
+    this.waitingIndex = -1;
+  },
   resetReslutList() {
-    if (this.screentype != "circle") {
+    if (this.screentype != "circle" && this.$element("cvalWaiting")) {
       this.$element("cvalWaiting").scrollTo({
         top: 0,
         left: 0,
         behavior: "smooth",
       });
     }
+    
+    // T9 拼音：使用 pinyinInput 而不是 cval
+    if (this.keyboardtype === "T9" && this.lang === "cn" && !this.numFlag && this.screentype != "circle") {
+      if (!this.pinyinInput || this.pinyinInput.length === 0) {
+        this.resultList = [];
+        this.displayPinyin = "";
+        this.setResultListAll();
+        return;
+      }
+      // 根据当前拼音输入查询词典
+      // 如果有多个拼音候选，默认查询第一个
+      if (this.pinyinCandidates && this.pinyinCandidates.length > 0) {
+        this.displayPinyin = this.pinyinCandidates[0];
+        this.getResultByWord(this.pinyinCandidates[0]);
+      } else {
+        this.displayPinyin = T9_MAP[this.pinyinInput][0] || "";
+      }
+      return;
+    }
+    
     let watingStr = "";
     if (this.lastWaitingStr && this.lastWaitingStr[this.waitingIndex]) {
       watingStr = this.lastWaitingStr[this.waitingIndex];
@@ -534,6 +705,38 @@ export default {
   },
   getResultByWord(val) {
     const that = this;
+    
+    // T9 拼音：先获取拼音候选，再查询词典
+    if (this.keyboardtype === "T9" && this.lang === "cn" && !this.numFlag && this.screentype != "circle") {
+      // 如果 val 是数字序列，生成拼音候选
+      if (/^[2-9]+$/.test(val)) {
+        const pinyinCombos = this.getPinyinByNums(val);
+        this.pinyinCandidates = pinyinCombos;
+        
+        // 如果有有效拼音，更新 displayPinyin 并查询第一个的汉字
+        if (pinyinCombos.length > 0) {
+          this.displayPinyin = pinyinCombos[0];
+          doSearchDic(pinyinCombos[0], function (data) {
+            that.resultList = data;
+            that.setResultListAll();
+          });
+        } else {
+          that.displayPinyin = "";
+          that.resultList = [];
+          that.setResultListAll();
+        }
+      } else {
+        // 直接查询
+        this.displayPinyin = val;
+        doSearchDic(val, function (data) {
+          that.resultList = data;
+          that.setResultListAll();
+        });
+      }
+      return;
+    }
+    
+    // 原有逻辑
     doSearchDic(val, function (data) {
       that.resultList = data;
       that.setResultListAll();
@@ -603,6 +806,31 @@ export default {
     this.clearWaiting();
     this.resetReslutList();
     this.addAllTxt(temp);
+  },
+  pushPinyin() {
+    this.onVibrate();
+    let temp = this.displayPinyin;
+    this.displayPinyin = "";
+    this.pinyinCandidates = [];
+    this.clearWaiting();
+    this.clearPinyinInput();
+    this.resetReslutList();
+    this.addAllTxt(temp);
+  },
+  // T9 拼音：选择拼音候选
+  onPinyinSelect(pinyin) {
+    this.onVibrate();
+
+    this.displayPinyin = pinyin; // 更新显示的拼音
+    this.getResultByWord(pinyin);
+    
+    if (this.screentype != "circle") {
+      this.$element("cvalWaiting").scrollTo({
+        top: 0,
+        left: 0,
+        behavior: "smooth",
+      });
+    }
   },
   adjustScreenWidth(){
     device.getInfo({
@@ -776,6 +1004,15 @@ export default {
   height: 55px;
   margin: 0 3px;
   width: unset;
+}
+
+.rect-t9-pinyin {
+	color:#fff;
+	font-size:22px;
+	font-weight:bold;
+  min-width: 60px;
+  margin: 4px 0;
+	text-align:center;
 }
 
 /* 这里判断一个圆表屏幕是否在460~470px之间（目前只有466px），是的话就缩放 */

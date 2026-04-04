@@ -1,7 +1,8 @@
 import { dict } from './dic.js'
 
 let SimpleInputMethod = {
-    dict: {}
+    dict: {},
+    pinyinSet: new Set() // 存储所有有效的拼音
 }
 
 SimpleInputMethod.initDict = function() {
@@ -9,12 +10,29 @@ SimpleInputMethod.initDict = function() {
     this.dict.py2hz2 = {};
     this.dict.py2hz2['i'] = 'i'; // i比较特殊，没有符合的汉字，所以特殊处理
 
+    // 构建有效拼音集合
     for (let key in this.dict.py2hz) {
-        let ch = key[0];
-        if (!this.dict.py2hz2[ch]) {
-            this.dict.py2hz2[ch] = this.dict.py2hz[key];
+        this.pinyinSet.add(key);
+        if (!this.dict.py2hz2[key[0]]) {
+            this.dict.py2hz2[key[0]] = this.dict.py2hz[key];
         }
     }
+};
+
+// 判断是否是有效的拼音
+SimpleInputMethod.isValidPinyin = function(pinyin) {
+    return this.pinyinSet.has(pinyin);
+};
+
+// 获取所有以某前缀开头的拼音
+SimpleInputMethod.getPinyinByPrefix = function(prefix) {
+    const result = [];
+    for (let pinyin of this.pinyinSet) {
+        if (pinyin.startsWith(prefix)) {
+            result.push(pinyin);
+        }
+    }
+    return result;
 };
 
 SimpleInputMethod.getSingleHanzi = function(pinyin){
